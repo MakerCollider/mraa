@@ -74,6 +74,51 @@ static int mmap_fd = 0;
 static int mmap_size;
 static unsigned int mmap_count = 0;
 
+/************************************
+************* B E G I N *************
+** Song,yunpeng                  ****
+** Support our extension board!!!****
+*************************************/
+#define EXTBOARDNAMEPATH "/etc/mc_extboard_name"
+#define NEWBREAKOUTNAME  "mc_newbreakout"
+mraa_result_t
+mraa_check_extestion_name(const char * boardname);
+
+mraa_result_t
+mraa_mc_edison_nbext(mraa_board_t* b);
+
+/*** GPIO ***/
+static mraa_result_t
+mraa_nbext_pinmode_change(int sysfs, int mode);
+mraa_result_t
+mraa_nbext_gpio_dir_replace(mraa_gpio_context dev, mraa_gpio_dir_t dir);
+mraa_result_t 
+mraa_nbext_gpio_write_replace(mraa_gpio_context dev, int value);
+int 
+mraa_nbext_gpio_read_replace (mraa_gpio_context dev);
+
+/*** I2C ***/
+mraa_result_t
+mraa_nbext_i2c_init_pre(unsigned int bus);
+
+/*** SPI ***/
+static mraa_result_t
+mraa_nbext_misc_spi();
+mraa_result_t
+mraa_nbext_spi_init_pre(int bus);
+
+/*** PWM ***/
+mraa_result_t
+mraa_nbext_pwm_init_pre(int pin);
+
+/*** UART ***/
+mraa_result_t
+mraa_nbext_uart_init_pre(int index);
+
+/********************************
+************* E N D *************
+*********************************/
+
 mraa_result_t
 mraa_intel_edison_spi_lsbmode_replace(mraa_spi_context dev, mraa_boolean_t lsb)
 {
@@ -1159,6 +1204,19 @@ mraa_intel_edison_fab_c()
     }
 
     b->platform_name = PLATFORM_NAME;
+
+	/*mc code start*/
+	if(mraa_check_extestion_name(NEWBREAKOUTNAME)==MRAA_SUCCESS){
+		if(mraa_mc_edison_nbext(b)==MRAA_SUCCESS){
+			printf("[%s,%d]here?\n",__FILE__,__LINE__);
+			return b;
+		}else{
+			syslog(LOG_INFO, "edison: Failed to initialise customize extension board\n");
+		}
+		//if not, go on.
+	}
+	/*mc code end*/
+	
     // This seciton will also check if the arduino board is there
     tristate = mraa_gpio_init_raw(214);
     if (tristate == NULL) {
@@ -1531,3 +1589,483 @@ error:
     free(b);
     return NULL;
 }
+
+mraa_result_t
+mraa_check_extestion_name(const char * boardname)
+{
+	FILE* fp=NULL;
+	char strbuffer[64];
+	if(boardname==NULL){
+		return MRAA_ERROR_INVALID_RESOURCE;
+	}
+	
+	fp = fopen(EXTBOARDNAMEPATH,"r");
+	if(fp==NULL){
+		syslog(LOG_CRIT,"edison: Fail to locate the %s file path.\n",EXTBOARDNAMEPATH);
+		return MRAA_ERROR_INVALID_RESOURCE;
+	}
+	if(fread(strbuffer,1,64,fp)==0){			
+		syslog(LOG_CRIT,"edison: Fail to read the board name.\n");
+		return MRAA_ERROR_INVALID_RESOURCE;
+	}
+
+	if(strstr(strbuffer,boardname)==NULL){		
+		syslog(LOG_CRIT,"edison: Fail to match the %s.\n",boardname);
+		return MRAA_ERROR_INVALID_RESOURCE;
+	}
+	return MRAA_SUCCESS;
+}
+
+mraa_result_t
+mraa_mc_edison_nbext(mraa_board_t* b)
+{
+	if(b==NULL)return MRAA_ERROR_INVALID_RESOURCE;
+
+	b->phy_pin_count = 20;/*syp*/
+    b->gpio_count = b->phy_pin_count; /*syp*/
+    b->aio_count = 0; /*syp*/
+
+    b->adv_func = (mraa_adv_func_t*) calloc(1, sizeof(mraa_adv_func_t));
+    if (b->adv_func == NULL) {
+        return MRAA_ERROR_INVALID_RESOURCE;
+    }
+	//gpio
+	b->adv_func->gpio_init_post = mraa_intel_edison_gpio_init_post;
+    b->adv_func->gpio_dir_replace = mraa_nbext_gpio_dir_replace;
+    b->adv_func->gpio_close_pre = mraa_intel_edison_gpio_close_pre;
+    b->adv_func->gpio_write_replace = mraa_nbext_gpio_write_replace;
+    b->adv_func->gpio_read_replace = mraa_nbext_gpio_read_replace;
+	
+	b->adv_func->gpio_mode_replace = mraa_intel_edison_gpio_mode_replace;
+    b->adv_func->gpio_mmap_setup = mraa_intel_edison_mmap_setup;
+
+   	//i2c
+    b->adv_func->i2c_init_pre = mraa_nbext_i2c_init_pre;
+    b->adv_func->i2c_set_frequency_replace = mraa_intel_edison_i2c_freq;
+
+	//pwm
+	b->adv_func->pwm_init_pre = mraa_nbext_pwm_init_pre;
+    b->adv_func->pwm_init_post = NULL;//mraa_intel_edison_pwm_init_post;
+
+	//spi
+	b->adv_func->spi_init_pre = mraa_nbext_spi_init_pre;
+    b->adv_func->spi_init_post = NULL;//mraa_intel_edison_spi_init_post;
+	b->adv_func->spi_lsbmode_replace = mraa_intel_edison_spi_lsbmode_replace;
+
+	//uart
+	b->adv_func->uart_init_pre = mraa_nbext_uart_init_pre;
+    b->adv_func->uart_init_post = NULL;//mraa_intel_edison_uart_init_post;
+	
+    b->pins = (mraa_pininfo_t*) malloc(sizeof(mraa_pininfo_t) * MRAA_INTEL_EDISON_PINCOUNT);
+    if (b->pins == NULL) {
+        free(b->adv_func);
+        return MRAA_ERROR_INVALID_RESOURCE;
+    }
+
+    mraa_nbext_misc_spi();
+
+    b->adc_raw = 0;/*syp*/
+    b->adc_supported = 0;/*syp*/
+    
+    b->pwm_default_period = 5000;
+    b->pwm_max_period = 218453;
+    b->pwm_min_period = 1;
+
+    strncpy(b->pins[0].name, "IO0", 8);
+    b->pins[0].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 1 };
+    b->pins[0].gpio.pinmap = 131;/*syp*/
+    b->pins[0].gpio.parent_id = 0;
+    b->pins[0].gpio.mux_total = 0;
+    b->pins[0].uart.pinmap = 0;
+    b->pins[0].uart.parent_id = 0;
+    b->pins[0].uart.mux_total = 0;
+
+    strncpy(b->pins[1].name, "IO1", 8);
+    b->pins[1].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 1 };
+    b->pins[1].gpio.pinmap = 130;/*syp*/
+    b->pins[1].gpio.parent_id = 0;
+    b->pins[1].gpio.mux_total = 0;
+    b->pins[1].uart.pinmap = 0;
+    b->pins[1].uart.parent_id = 0;
+    b->pins[1].uart.mux_total = 0;
+	
+    strncpy(b->pins[2].name, "IO2", 8);
+    b->pins[2].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 1, 0, 0, 0 };
+    b->pins[2].gpio.pinmap = 114;
+    b->pins[2].gpio.parent_id = 0;
+    b->pins[2].gpio.mux_total = 0;
+    b->pins[2].spi.pinmap = 5;
+    b->pins[2].spi.mux_total = 0;
+
+    strncpy(b->pins[3].name, "IO3", 8);
+    b->pins[3].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 1, 0, 0, 0 };
+    b->pins[3].gpio.pinmap = 115;
+    b->pins[3].gpio.parent_id = 0;
+    b->pins[3].gpio.mux_total = 0;
+    b->pins[3].spi.pinmap = 5;
+    b->pins[3].spi.mux_total = 0;
+
+    strncpy(b->pins[4].name, "IO4", 8);
+    b->pins[4].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 1, 0, 0, 0 };
+    b->pins[4].gpio.pinmap = 109;
+    b->pins[4].gpio.parent_id = 0;
+    b->pins[4].gpio.mux_total = 0;
+    b->pins[4].spi.pinmap = 5;
+    b->pins[4].spi.mux_total =0;
+	
+    strncpy(b->pins[5].name, "IO5", 8);
+    b->pins[5].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 1, 0, 0 };
+    b->pins[5].i2c.pinmap = 1;
+    b->pins[5].i2c.mux_total = 0;
+    b->pins[5].gpio.pinmap = 28;
+    b->pins[5].gpio.mux_total = 0;
+
+    strncpy(b->pins[6].name, "IO6", 8);
+    b->pins[6].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 1, 0, 0 };
+    b->pins[6].i2c.pinmap = 1;
+    b->pins[6].i2c.mux_total = 0;
+    b->pins[6].gpio.pinmap = 27;
+    b->pins[6].gpio.mux_total = 0;
+
+    strncpy(b->pins[7].name, "IO7", 8);
+    b->pins[7].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 1, 0, 0, 0 };
+    b->pins[7].gpio.pinmap = 110;
+    b->pins[7].gpio.parent_id = 0;
+    b->pins[7].gpio.mux_total = 0;
+    b->pins[7].spi.pinmap = 5;
+    b->pins[7].spi.mux_total = 0;
+
+    /*========================TODO: usb & power board========================*/
+    strncpy(b->pins[8].name, "IO8", 8);
+    b->pins[8].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0 };
+    b->pins[8].gpio.pinmap = 12;
+    b->pins[8].gpio.parent_id = 0;
+    b->pins[8].gpio.mux_total = 0;
+    b->pins[8].pwm.pinmap = 0;
+    b->pins[8].pwm.parent_id = 0;
+    b->pins[8].pwm.mux_total = 0;
+	
+    strncpy(b->pins[9].name, "IO9", 8);
+    b->pins[9].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0 };
+    b->pins[9].gpio.pinmap = 13;
+    b->pins[9].gpio.parent_id = 0;
+    b->pins[9].gpio.mux_total = 0;
+    b->pins[9].pwm.pinmap = 1;
+    b->pins[9].pwm.parent_id = 0;
+    b->pins[9].pwm.mux_total = 0;
+	
+    strncpy(b->pins[10].name, "IO10", 8);
+    b->pins[10].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0 };
+    b->pins[10].gpio.pinmap = 183;
+    b->pins[10].gpio.parent_id = 0;
+    b->pins[10].gpio.mux_total = 0;
+    b->pins[10].pwm.pinmap = 3;
+    b->pins[10].pwm.parent_id = 0;
+    b->pins[10].pwm.mux_total = 0;
+	
+    strncpy(b->pins[11].name, "IO11", 8);
+    b->pins[11].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0 };
+    b->pins[11].gpio.pinmap = 182;
+    b->pins[11].gpio.parent_id = 0;
+    b->pins[11].gpio.mux_total = 0;
+    b->pins[11].pwm.pinmap = 2;
+    b->pins[11].pwm.parent_id = 0;
+    b->pins[11].pwm.mux_total = 0;
+
+/*=============TODO:these are I2S interfaces, curently, no pinmux================*/
+    strncpy(b->pins[12].name, "IO12", 8);
+    b->pins[12].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0 };
+    b->pins[12].gpio.pinmap = 42;
+    b->pins[12].gpio.parent_id = 0;
+    b->pins[12].gpio.mux_total = 0;
+	
+    strncpy(b->pins[13].name, "IO13", 8);
+    b->pins[13].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0 };
+    b->pins[13].gpio.pinmap = 40;
+    b->pins[13].gpio.parent_id = 0;
+    b->pins[13].gpio.mux_total = 0;
+	
+    strncpy(b->pins[14].name, "IO14", 8);
+    b->pins[14].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0 };
+    b->pins[14].gpio.pinmap = 43;
+    b->pins[14].gpio.parent_id = 0;
+    b->pins[14].gpio.mux_total = 0;
+	
+    strncpy(b->pins[15].name, "IO15", 8);
+    b->pins[15].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0 };
+    b->pins[15].gpio.pinmap = 41;
+    b->pins[15].gpio.parent_id = 0;
+    b->pins[15].gpio.mux_total = 0;
+
+    // BUS DEFINITIONS
+    b->i2c_bus_count = 9;
+    b->def_i2c_bus = 6;
+    int ici;
+    for (ici = 0; ici < 9; ici++) {
+        b->i2c_bus[ici].bus_id = -1;
+    }
+    b->i2c_bus[6].bus_id = 6;
+    b->i2c_bus[6].sda = 5;/*syp*/
+    b->i2c_bus[6].scl = 6;/*syp*/
+
+    b->spi_bus_count = 1;
+    b->def_spi_bus = 0;
+    b->spi_bus[0].bus_id = 5;
+    b->spi_bus[0].slave_s = 1;
+    b->spi_bus[0].cs = 7;/*syp*/
+    b->spi_bus[0].mosi = 3;/*syp*/
+    b->spi_bus[0].miso = 2;/*syp*/
+    b->spi_bus[0].sclk = 4;/*syp*/
+
+    b->uart_dev_count = 1;
+    b->def_uart_dev = 0;
+    b->uart_dev[0].rx = 1;/*syp*/
+    b->uart_dev[0].tx = 0;/*syp*/
+    b->uart_dev[0].device_path = UART_DEV_PATH;
+
+    int il;
+    for (il = 0; il < MRAA_INTEL_EDISON_PINCOUNT; il++) {
+        pinmodes[il].gpio.sysfs = -1;
+        pinmodes[il].gpio.mode = -1;
+        pinmodes[il].pwm.sysfs = -1;
+        pinmodes[il].pwm.mode = -1;
+        pinmodes[il].i2c.sysfs = -1;
+        pinmodes[il].i2c.mode = -1;
+        pinmodes[il].spi.sysfs = -1;
+        pinmodes[il].spi.mode = -1;
+        pinmodes[il].uart.sysfs = -1;
+        pinmodes[il].uart.mode = -1;
+    }
+    pinmodes[0].gpio.sysfs = 131;
+    pinmodes[0].gpio.mode = 0;
+    pinmodes[0].uart.sysfs = 131;
+    pinmodes[0].uart.mode = 1;
+	
+    pinmodes[1].gpio.sysfs = 130;
+    pinmodes[1].gpio.mode = 0;
+    pinmodes[1].uart.sysfs = 130;
+    pinmodes[1].uart.mode = 1;
+	
+    pinmodes[2].gpio.sysfs = 114;
+    pinmodes[2].gpio.mode = 0;
+    pinmodes[2].spi.sysfs = 114; // Different pin provides, switched at mux level.
+    pinmodes[2].spi.mode = 1;
+
+    pinmodes[3].gpio.sysfs = 115;
+    pinmodes[3].gpio.mode = 0;
+    pinmodes[3].spi.sysfs = 115; // Different pin provides, switched at mux level.
+    pinmodes[3].spi.mode = 1;
+
+    pinmodes[4].gpio.sysfs = 109;
+    pinmodes[4].gpio.mode = 0;
+    pinmodes[4].spi.sysfs = 109; // Different pin provides, switched at mux level.
+    pinmodes[4].spi.mode = 1;
+
+    // Everything else but A4 A5 LEAVE
+    pinmodes[5].gpio.sysfs = 28;
+    pinmodes[5].gpio.mode = 0;
+    pinmodes[5].i2c.sysfs = 28;
+    pinmodes[5].i2c.mode = 1;
+
+    pinmodes[6].gpio.sysfs = 27;
+    pinmodes[6].gpio.mode = 0;
+    pinmodes[6].i2c.sysfs = 27;
+    pinmodes[6].i2c.mode = 1;
+	
+    pinmodes[7].gpio.sysfs = 110;
+    pinmodes[7].gpio.mode = 0;
+    pinmodes[7].spi.sysfs = 110; // Different pin provides, switched at mux level.
+    pinmodes[7].spi.mode = 1;
+	
+    pinmodes[8].gpio.sysfs = 12;
+    pinmodes[8].gpio.mode = 0;
+    pinmodes[8].pwm.sysfs = 12;
+    pinmodes[8].pwm.mode = 1;
+
+    pinmodes[9].gpio.sysfs = 13;
+    pinmodes[9].gpio.mode = 0;
+    pinmodes[9].pwm.sysfs = 13;
+    pinmodes[9].pwm.mode = 1;
+
+    pinmodes[10].gpio.sysfs = 183;
+    pinmodes[10].gpio.mode = 0;
+    pinmodes[10].pwm.sysfs = 183;
+    pinmodes[10].pwm.mode = 1;
+
+    pinmodes[11].gpio.sysfs = 182;
+    pinmodes[11].gpio.mode = 0;
+    pinmodes[11].pwm.sysfs = 182;
+    pinmodes[11].pwm.mode = 1;
+
+    pinmodes[12].gpio.sysfs = 42;
+    pinmodes[12].gpio.mode = 0;
+
+    pinmodes[13].gpio.sysfs = 40;
+    pinmodes[13].gpio.mode = 0;
+	
+    pinmodes[14].gpio.sysfs = 43;
+    pinmodes[14].gpio.mode = 0;
+
+    pinmodes[15].gpio.sysfs = 41;
+    pinmodes[15].gpio.mode = 0;	
+
+	return MRAA_SUCCESS;
+}
+mraa_result_t
+mraa_nbext_gpio_valfp(mraa_gpio_context dev)
+{
+	int sysfs =  pinmodes[dev->phy_pin].gpio.sysfs;
+	char buffer[MAX_SIZE];
+	snprintf(buffer, MAX_SIZE, DEBUGFS_PINMODE_PATH"%i/current_value", sysfs);
+	
+	int valfp = open(buffer, O_RDWR);
+	if (valfp == -1) {
+		syslog(LOG_ERR, "edison: Failed to open SoC value for opening");
+		return MRAA_ERROR_INVALID_RESOURCE;
+	}
+	
+	dev->value_fp = valfp;
+	return MRAA_SUCCESS;
+}
+mraa_result_t 
+mraa_nbext_gpio_write_replace(mraa_gpio_context dev, int value)
+{
+    if (dev == NULL) {
+        return MRAA_ERROR_INVALID_RESOURCE;
+    }
+	if(dev->value_fp<0){
+		if(mraa_nbext_gpio_valfp(dev)!=MRAA_SUCCESS){
+			return MRAA_ERROR_INVALID_RESOURCE;
+		}
+	}
+		
+    mraa_result_t ret = MRAA_SUCCESS;
+    char value_buf[MAX_MODE_SIZE];
+    if(value==0){
+		strcpy(value_buf,"low");
+    }else{
+		strcpy(value_buf,"high");
+    }
+
+	lseek(dev->value_fp, 0, SEEK_SET);
+    if (write(dev->value_fp, value_buf, MAX_MODE_SIZE * sizeof(char)) == -1) {
+        ret = MRAA_ERROR_INVALID_RESOURCE;
+    }
+    return MRAA_SUCCESS;
+
+}
+int mraa_nbext_gpio_read_replace (mraa_gpio_context dev)
+{
+	if (dev == NULL) {
+		return MRAA_ERROR_INVALID_RESOURCE;
+	}
+	if(dev->value_fp<0){
+		if(mraa_nbext_gpio_valfp(dev)!=MRAA_SUCCESS){
+	 		return MRAA_ERROR_INVALID_RESOURCE;
+		}
+	}
+
+	lseek(dev->value_fp, 0, SEEK_SET);
+    int ret = -1;
+    char value_buf[MAX_MODE_SIZE];
+    if(-1==read(dev->value_fp,value_buf,MAX_MODE_SIZE)){
+		ret = -1;
+    }
+    if(strstr(value_buf,"high"))
+    {//high
+		ret = 1;
+    }else
+    {//low
+        ret = 0;
+    }
+	return ret;	
+}
+
+mraa_result_t
+mraa_nbext_gpio_dir_replace(mraa_gpio_context dev, mraa_gpio_dir_t dir)
+{
+    if (dev == NULL) {
+        return MRAA_ERROR_INVALID_RESOURCE;
+    }
+    int sysfs =  pinmodes[dev->phy_pin].gpio.sysfs;
+    char buffer[MAX_SIZE];
+    snprintf(buffer, MAX_SIZE, DEBUGFS_PINMODE_PATH"%i/current_direction", sysfs);
+    int dirf = open(buffer, O_WRONLY);
+    if (dirf == -1) {
+        syslog(LOG_ERR, "edison: Failed to open SoC pinmode for opening");
+        return MRAA_ERROR_INVALID_RESOURCE;
+    }
+
+    mraa_result_t ret = MRAA_SUCCESS;
+    char dir_buf[MAX_MODE_SIZE];
+    switch(dir){
+    case MRAA_GPIO_OUT:
+		strcpy(dir_buf,"out");
+		break;
+    case MRAA_GPIO_IN:
+		strcpy(dir_buf,"in");
+		break;
+    default:
+		return MRAA_ERROR_INVALID_RESOURCE;
+    }
+    if (write(dirf, dir_buf, MAX_MODE_SIZE * sizeof(char)) == -1) {
+        ret = MRAA_ERROR_INVALID_RESOURCE;
+    }
+    close(dirf);
+    return MRAA_SUCCESS;
+}
+
+mraa_result_t
+mraa_nbext_i2c_init_pre(unsigned int bus)
+{
+    mraa_intel_edison_pinmode_change(28, 1);
+    mraa_intel_edison_pinmode_change(27, 1);
+    return MRAA_SUCCESS;
+}
+mraa_result_t
+mraa_nbext_pwm_init_pre(int pin)
+{
+    if (pin < 0 || pin > 19) {
+        return MRAA_ERROR_INVALID_RESOURCE;
+    }
+
+    if (!plat->pins[pin].capabilites.pwm) {
+        return MRAA_ERROR_INVALID_RESOURCE;
+    }
+    
+    mraa_intel_edison_pinmode_change(plat->pins[pin].gpio.pinmap, 1);
+    return MRAA_SUCCESS;
+}
+
+mraa_result_t
+mraa_nbext_uart_init_pre(int index)
+{
+    if (index != 0) {
+        syslog(LOG_ERR, "edison: Failed to write to drive mode");
+        return MRAA_ERROR_INVALID_RESOURCE;
+    }
+    mraa_result_t ret;
+    ret = mraa_intel_edison_pinmode_change(130, 1); // IO0 RX
+    ret = mraa_intel_edison_pinmode_change(131, 1); // IO1 TX
+    return ret;
+}
+
+mraa_result_t
+mraa_nbext_spi_init_pre(int bus)
+{
+	mraa_intel_edison_pinmode_change(115, 1);
+	mraa_intel_edison_pinmode_change(114, 1);
+	mraa_intel_edison_pinmode_change(109, 1);
+
+    return MRAA_SUCCESS;
+}
+static mraa_result_t
+mraa_nbext_misc_spi()
+{
+    mraa_intel_edison_pinmode_change(115, 1);
+    mraa_intel_edison_pinmode_change(114, 1);
+    mraa_intel_edison_pinmode_change(109, 1);
+
+    return MRAA_SUCCESS;
+}
+
