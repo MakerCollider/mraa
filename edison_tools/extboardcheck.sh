@@ -16,6 +16,15 @@ check_edibot()
 		echo "Edibot extension board confirmed."
 		echo $EDIBOT > $BOARDNAME
 	fi
+
+	arr=( 3 7 6 5 4 2 1 0 8 9 10 11 12 13 14 15 )
+	echo "test IO are (${arr[@]})"
+	echo "turn on all leds."
+	for i in ${arr[@]}
+	do
+		echo "IO led on:" $i
+		mraaio $i 0
+	done
 }
 
 rm -rf $BOARDNAME

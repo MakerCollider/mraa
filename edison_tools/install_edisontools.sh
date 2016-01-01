@@ -4,6 +4,8 @@ cp extboardcheck.sh /etc/
 cp check5611 /usr/bin
 cp check6050 /usr/bin
 cp check5883 /usr/bin
+cp mraaio /user/bin
+
 cp extboard_detect.service /usr/lib/systemd/user
 echo "Enabling Edison extension board check tool start up.\n"
 systemctl enable /usr/lib/systemd/user/extboad_detect.service
