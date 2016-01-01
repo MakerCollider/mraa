@@ -1208,7 +1208,7 @@ mraa_intel_edison_fab_c()
 	/*mc code start*/
 	if(mraa_check_extestion_name(NEWBREAKOUTNAME)==MRAA_SUCCESS){
 		if(mraa_mc_edison_nbext(b)==MRAA_SUCCESS){
-			printf("[%s,%d]here?\n",__FILE__,__LINE__);
+			//printf("[%s,%d]here?\n",__FILE__,__LINE__);
 			return b;
 		}else{
 			syslog(LOG_INFO, "edison: Failed to initialise customize extension board\n");
