@@ -9,5 +9,6 @@ cp mraaio /usr/bin
 cp extboard_detect.service /usr/lib/systemd/user
 echo "Enabling Edison extension board check tool start up.\n"
 systemctl enable /usr/lib/systemd/user/extboard_detect.service
+systemctl restart extboard_detect
 echo "All done."
 echo "Please reboot your Edison to enjoy the new MRAA of Newbreakout."
