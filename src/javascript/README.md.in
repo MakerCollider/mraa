@@ -5,8 +5,8 @@ libmraa - Low Level Skeleton Library for Communication on GNU/Linux platforms
 
 Libmraa_makercollider is a C/C++ library with bindings to javascript & python to interface
 with Edison platforms, with a structured and sane
-API where port names/numbering matches the board that you are on. This library is only used
-on Intel Edison platform, and we make some change to let the mraa library to adapter the
+API where port names/numbering matches the board that you are on. This library is only used 
+on Intel Edison platform, and we make some change to let the mraa library to adapter the 
 extension board type, and now it support the Intel Edison Arduino extension board and makercollider
 new breakout board
 
