@@ -10,8 +10,8 @@
   "bugs": {
     "url" : "https://github.com/MakerCollider/mraa/issues"
   },
-  "postinstall": {
-    "./install_edisontools.sh"
+  "scripts": {
+    "postinstall": "./install_edisontools.sh"
   },
   "license": "MIT",
   "version": "@VERSION@",
