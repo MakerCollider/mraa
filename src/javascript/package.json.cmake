@@ -12,7 +12,7 @@
   },
   "postinstall": {
     "./install_edisontools.sh"
-  }
+  },
   "license": "MIT",
   "version": "@VERSION@",
   "authors": "See https://github.com/MakerCollider/mraa/graphs/contributors"
