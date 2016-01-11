@@ -77,6 +77,11 @@ mraa_pwm_write_period(mraa_pwm_context dev, int period)
     return MRAA_SUCCESS;
 }
 
+static void
+mraa_pwm_duty_workround(mraa_pwm_context dev, int duty)
+{
+	
+}
 static mraa_result_t
 mraa_pwm_write_duty(mraa_pwm_context dev, int duty)
 {
@@ -85,7 +90,22 @@ mraa_pwm_write_duty(mraa_pwm_context dev, int duty)
             return MRAA_ERROR_INVALID_HANDLE;
         }
     }
-    char bu[64];
+	if(duty==0){/*call the workaround*/
+		char cmd[64];
+		
+		memset(cmd,0,64);
+		sprintf(cmd, "echo %d %s", dev->pin, "> /sys/class/gpio/unexport");
+        system(cmd);
+		
+		memset(cmd,0,64);
+		sprintf(cmd,"echo low > /sys/kernel/debug/gpio_debug/gpio%d/current_value",dev->pin);
+		system(cmd);
+		
+		memset(cmd, '\0', sizeof(cmd));
+        sprintf(cmd, "echo %d %s", dev->pin, "> /sys/class/gpio/export");
+        system(cmd);
+	}
+	char bu[64];
     int length = sprintf(bu, "%d", duty);
     if (write(dev->duty_fp, bu, length * sizeof(char)) == -1)
         return MRAA_ERROR_INVALID_RESOURCE;
