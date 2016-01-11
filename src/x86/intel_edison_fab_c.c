@@ -81,6 +81,13 @@ static unsigned int mmap_count = 0;
 *************************************/
 #define EXTBOARDNAMEPATH "/etc/mc_extboard_name"
 #define NEWBREAKOUTNAME  "mc_newbreakout"
+typedef enum {
+    GPIO_PULL_2K = 0,   /**< Default. Strong high and low */
+    GPIO_PULL_20K = 1,   /**< Resistive High */
+    GPIO_PULL_50K = 2, /**< Resistive Low */
+    GPIO_PULL_DEFAULT=GPIO_PULL_50K,
+} gpio_pullstrength_t;
+
 mraa_result_t
 mraa_check_extestion_name(const char * boardname);
 
@@ -91,11 +98,13 @@ mraa_mc_edison_nbext(mraa_board_t* b);
 static mraa_result_t
 mraa_nbext_pinmode_change(int sysfs, int mode);
 mraa_result_t
-mraa_nbext_gpio_dir_replace(mraa_gpio_context dev, mraa_gpio_dir_t dir);
+mraa_nbext_gpio_dir_pre(mraa_gpio_context dev, mraa_gpio_dir_t dir);
 mraa_result_t 
 mraa_nbext_gpio_write_replace(mraa_gpio_context dev, int value);
 int 
 mraa_nbext_gpio_read_replace (mraa_gpio_context dev);
+mraa_result_t
+mraa_nbext_gpio_close_pre (mraa_gpio_context dev);
 
 /*** I2C ***/
 mraa_result_t
@@ -1630,11 +1639,12 @@ mraa_mc_edison_nbext(mraa_board_t* b)
         return MRAA_ERROR_INVALID_RESOURCE;
     }
 	//gpio
-	b->adv_func->gpio_init_post = mraa_intel_edison_gpio_init_post;
-    b->adv_func->gpio_dir_replace = mraa_nbext_gpio_dir_replace;
+	b->adv_func->gpio_init_post = mraa_intel_edison_gpio_init_post;	
+    b->adv_func->gpio_dir_pre = mraa_nbext_gpio_dir_pre;
     b->adv_func->gpio_close_pre = mraa_intel_edison_gpio_close_pre;
     b->adv_func->gpio_write_replace = mraa_nbext_gpio_write_replace;
     b->adv_func->gpio_read_replace = mraa_nbext_gpio_read_replace;
+	b->adv_func->gpio_close_pre = mraa_nbext_gpio_close_pre;
 	
 	b->adv_func->gpio_mode_replace = mraa_intel_edison_gpio_mode_replace;
     b->adv_func->gpio_mmap_setup = mraa_intel_edison_mmap_setup;
@@ -1941,6 +1951,7 @@ mraa_nbext_gpio_write_replace(mraa_gpio_context dev, int value)
 		
     mraa_result_t ret = MRAA_SUCCESS;
     char value_buf[MAX_MODE_SIZE];
+	memset(value_buf,0,MAX_MODE_SIZE*sizeof(char));
     if(value==0){
 		strcpy(value_buf,"low");
     }else{
@@ -1967,7 +1978,8 @@ int mraa_nbext_gpio_read_replace (mraa_gpio_context dev)
 
 	lseek(dev->value_fp, 0, SEEK_SET);
     int ret = -1;
-    char value_buf[MAX_MODE_SIZE];
+    char value_buf[MAX_MODE_SIZE];	
+	memset(value_buf,0,MAX_MODE_SIZE*sizeof(char));
     if(-1==read(dev->value_fp,value_buf,MAX_MODE_SIZE)){
 		ret = -1;
     }
@@ -1982,37 +1994,67 @@ int mraa_nbext_gpio_read_replace (mraa_gpio_context dev)
 }
 
 mraa_result_t
-mraa_nbext_gpio_dir_replace(mraa_gpio_context dev, mraa_gpio_dir_t dir)
+mraa_nbext_gpio_pullstrength(mraa_gpio_context dev,gpio_pullstrength_t strength)
 {
-    if (dev == NULL) {
-        return MRAA_ERROR_INVALID_RESOURCE;
-    }
-    int sysfs =  pinmodes[dev->phy_pin].gpio.sysfs;
-    char buffer[MAX_SIZE];
-    snprintf(buffer, MAX_SIZE, DEBUGFS_PINMODE_PATH"%i/current_direction", sysfs);
-    int dirf = open(buffer, O_WRONLY);
-    if (dirf == -1) {
+	int ret=MRAA_SUCCESS;
+	int pin = dev->pin;
+	char strpath[MAX_SIZE];
+	char strval[MAX_MODE_SIZE];
+	sprintf(strpath,DEBUGFS_PINMODE_PATH"%i/current_pullstrength",pin);
+	
+    int strengthf = open(strpath, O_WRONLY);
+    if (strengthf == -1) {
         syslog(LOG_ERR, "edison: Failed to open SoC pinmode for opening");
         return MRAA_ERROR_INVALID_RESOURCE;
     }
 
-    mraa_result_t ret = MRAA_SUCCESS;
-    char dir_buf[MAX_MODE_SIZE];
-    switch(dir){
+	memset(strval,0,sizeof(char)*MAX_MODE_SIZE);
+	switch(strength){
+    case GPIO_PULL_2K:
+		strcpy(strval,"2k");
+		break;
+    case GPIO_PULL_20K:
+		strcpy(strval,"20k");
+		break;
+    case GPIO_PULL_50K:
+		strcpy(strval,"50k");
+		break;
+    default:
+		ret = MRAA_ERROR_INVALID_RESOURCE;
+		goto error;
+    }
+	if (write(strengthf, strval, MAX_MODE_SIZE * sizeof(char)) == -1) {
+        ret = MRAA_ERROR_INVALID_RESOURCE;
+    }
+error:
+	close(strengthf);
+	return ret;
+}
+mraa_result_t
+mraa_nbext_gpio_dir_pre(mraa_gpio_context dev, mraa_gpio_dir_t dir)
+{
+    if (dev == NULL) {
+        return MRAA_ERROR_INVALID_RESOURCE;
+    }
+	int ret = MRAA_SUCCESS;
+
+	switch(dir){
     case MRAA_GPIO_OUT:
-		strcpy(dir_buf,"out");
+		ret = mraa_nbext_gpio_pullstrength(dev,GPIO_PULL_DEFAULT);
 		break;
     case MRAA_GPIO_IN:
-		strcpy(dir_buf,"in");
+		ret = mraa_nbext_gpio_pullstrength(dev,GPIO_PULL_2K);
 		break;
     default:
 		return MRAA_ERROR_INVALID_RESOURCE;
     }
-    if (write(dirf, dir_buf, MAX_MODE_SIZE * sizeof(char)) == -1) {
-        ret = MRAA_ERROR_INVALID_RESOURCE;
-    }
-    close(dirf);
-    return MRAA_SUCCESS;
+	return ret;
+}
+mraa_result_t
+mraa_nbext_gpio_close_pre (mraa_gpio_context dev)
+{
+	mraa_nbext_gpio_pullstrength(dev,GPIO_PULL_DEFAULT);
+	return MRAA_SUCCESS;
 }
 
 mraa_result_t
