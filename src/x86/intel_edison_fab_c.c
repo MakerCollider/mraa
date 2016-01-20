@@ -1610,7 +1610,7 @@ mraa_check_extestion_name(const char * boardname)
 	
 	fp = fopen(EXTBOARDNAMEPATH,"r");
 	if(fp==NULL){
-		syslog(LOG_CRIT,"edison: Fail to locate the %s file path.\n",EXTBOARDNAMEPATH);
+		//syslog(LOG_CRIT,"edison: Fail to locate the %s file path.\n",EXTBOARDNAMEPATH);
 		return MRAA_ERROR_INVALID_RESOURCE;
 	}
 	if(fread(strbuffer,1,64,fp)==0){			
