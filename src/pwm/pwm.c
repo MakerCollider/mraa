@@ -90,25 +90,25 @@ mraa_pwm_write_duty(mraa_pwm_context dev, int duty)
             return MRAA_ERROR_INVALID_HANDLE;
         }
     }
-	if(duty==0){/*call the workaround*/
+
+	if(duty==0 
+	&& dev->pin<4 
+	&& strcmp(plat->platform_name,"Intel Edison")==0){/*call the workaround*/
+		//syp code. only available for edison
+		int pwm_map[]={8,9,11,10};//the borad io map
 		char cmd[64];
-		
-		memset(cmd,0,64);
-		sprintf(cmd, "echo %d %s", dev->pin, "> /sys/class/gpio/unexport");
-        system(cmd);
-		
-		memset(cmd,0,64);
-		sprintf(cmd,"echo low > /sys/kernel/debug/gpio_debug/gpio%d/current_value",dev->pin);
-		system(cmd);
-		
-		memset(cmd, '\0', sizeof(cmd));
-        sprintf(cmd, "echo %d %s", dev->pin, "> /sys/class/gpio/export");
-        system(cmd);
+		int gpio = pwm_map[dev->pin];
+		mraa_gpio_context p = mraa_gpio_init(gpio);
+		if(p){
+			mraa_gpio_write(p,0);
+			mraa_gpio_close(p);
+		}
 	}
 	char bu[64];
-    int length = sprintf(bu, "%d", duty);
-    if (write(dev->duty_fp, bu, length * sizeof(char)) == -1)
-        return MRAA_ERROR_INVALID_RESOURCE;
+	int length = sprintf(bu, "%d", duty);
+	if (write(dev->duty_fp, bu, length * sizeof(char)) == -1)
+    	return MRAA_ERROR_INVALID_RESOURCE;
+
     return MRAA_SUCCESS;
 }
 
