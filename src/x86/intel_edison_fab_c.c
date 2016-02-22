@@ -1640,7 +1640,7 @@ mraa_mc_edison_nbext(mraa_board_t* b)
     }
 	//gpio
 	b->adv_func->gpio_init_post = mraa_intel_edison_gpio_init_post;	
-    b->adv_func->gpio_dir_pre = mraa_nbext_gpio_dir_pre;
+    b->adv_func->gpio_dir_post = mraa_nbext_gpio_dir_pre;
     b->adv_func->gpio_close_pre = mraa_intel_edison_gpio_close_pre;
     b->adv_func->gpio_write_replace = mraa_nbext_gpio_write_replace;
     b->adv_func->gpio_read_replace = mraa_nbext_gpio_read_replace;
@@ -2037,7 +2037,7 @@ mraa_nbext_gpio_dir_pre(mraa_gpio_context dev, mraa_gpio_dir_t dir)
         return MRAA_ERROR_INVALID_RESOURCE;
     }
 	int ret = MRAA_SUCCESS;
-
+    //printf("[%s,%d]mraa pull strength set.\n",__FILE__,__LINE__);
 	switch(dir){
     case MRAA_GPIO_OUT:
 		ret = mraa_nbext_gpio_pullstrength(dev,GPIO_PULL_DEFAULT);
