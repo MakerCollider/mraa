@@ -102,8 +102,8 @@ mraa_pwm_write_duty(mraa_pwm_context dev, int duty)
 		if(p){
 			mraa_gpio_write(p,0);
 			mraa_gpio_close(p);
-			dev = mraa_pwm_init(gpio);
-			mraa_pwm_enable(dev,1);
+			mraa_pwm_init(gpio);
+			//mraa_pwm_enable(dev,1);
 		}
 	}
 	char bu[64];
