@@ -1,0 +1,7 @@
+[Unit]
+Description=MC_EXTBOARD_DETECT
+[Service]
+Type=forking
+ExecStart=/etc/extboardcheck.sh
+[Install]
+WantedBy=multi-user.target

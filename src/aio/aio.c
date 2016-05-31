@@ -146,6 +146,16 @@ mraa_aio_read(mraa_aio_context dev)
             return 0;
         }
     }
+    if (IS_FUNC_DEFINED(dev, aio_read)) {
+		unsigned long val=0;
+        mraa_result_t ret = dev->advance_func->aio_read(dev,&val);
+		if(ret!=MRAA_SUCCESS){
+            syslog(LOG_ERR, "aio: invalid analog value");
+			return 0;
+		}
+		
+        return val;
+    }
 
     lseek(dev->adc_in_fp, 0, SEEK_SET);
     if (read(dev->adc_in_fp, buffer, sizeof(buffer)) < 1) {
@@ -184,6 +194,16 @@ mraa_aio_read_float(mraa_aio_context dev)
     if (dev == NULL) {
         syslog(LOG_ERR, "aio: Device not valid");
         return 0.0;
+    }
+    if (IS_FUNC_DEFINED(dev, aio_read_float)) {
+		float val=0;
+        mraa_result_t ret = dev->advance_func->aio_read_float(dev,&val);
+		if(ret!=MRAA_SUCCESS){
+            syslog(LOG_ERR, "aio: invalid analog value");
+			return 0;
+		}
+		
+        return val;
     }
 
     float max_analog_value = (1 << dev->value_bit) - 1;

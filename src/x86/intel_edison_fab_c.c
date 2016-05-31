@@ -31,6 +31,7 @@
 
 #include "common.h"
 #include "x86/intel_edison_fab_c.h"
+#include "ads1115.h"
 
 #define PLATFORM_NAME "Intel Edison"
 #define SYSFS_CLASS_GPIO "/sys/class/gpio"
@@ -123,6 +124,17 @@ mraa_nbext_pwm_init_pre(int pin);
 /*** UART ***/
 mraa_result_t
 mraa_nbext_uart_init_pre(int index);
+
+mraa_result_t
+mraa_nbext_aio_get_fp(mraa_aio_context dev);
+mraa_result_t
+mraa_nbext_aio_init_pre(unsigned int aio);
+mraa_result_t
+mraa_nbext_aio_init_post(mraa_aio_context dev);
+mraa_result_t
+mraa_nbext_aio_read(mraa_aio_context dev,unsigned long *pval);
+mraa_result_t
+mraa_nbext_aio_read_float(mraa_aio_context dev,float *pval);
 
 /********************************
 ************* E N D *************
@@ -1631,8 +1643,8 @@ mraa_mc_edison_nbext(mraa_board_t* b)
 	if(b==NULL)return MRAA_ERROR_INVALID_RESOURCE;
 
 	b->phy_pin_count = 20;/*syp*/
-    b->gpio_count = b->phy_pin_count; /*syp*/
-    b->aio_count = 0; /*syp*/
+    b->gpio_count = 16; /*syp*/
+    b->aio_count = 3; /*syp*/
 
     b->adv_func = (mraa_adv_func_t*) calloc(1, sizeof(mraa_adv_func_t));
     if (b->adv_func == NULL) {
@@ -1665,6 +1677,13 @@ mraa_mc_edison_nbext(mraa_board_t* b)
 	//uart
 	b->adv_func->uart_init_pre = mraa_nbext_uart_init_pre;
     b->adv_func->uart_init_post = NULL;//mraa_intel_edison_uart_init_post;
+
+	//aio
+    b->adv_func->aio_get_valid_fp = mraa_nbext_aio_get_fp;
+    b->adv_func->aio_init_pre = mraa_nbext_aio_init_pre;
+    b->adv_func->aio_init_post = mraa_nbext_aio_init_post;
+	b->adv_func->aio_read = mraa_nbext_aio_read;
+	b->adv_func->aio_read_float = mraa_nbext_aio_read_float;
 	
     b->pins = (mraa_pininfo_t*) malloc(sizeof(mraa_pininfo_t) * MRAA_INTEL_EDISON_PINCOUNT);
     if (b->pins == NULL) {
@@ -1806,6 +1825,19 @@ mraa_mc_edison_nbext(mraa_board_t* b)
     b->pins[15].gpio.pinmap = 41;
     b->pins[15].gpio.parent_id = 0;
     b->pins[15].gpio.mux_total = 0;
+	
+/*========================TODO: analog digital converter========================*/	
+    strncpy(b->pins[16].name, "A0", 8);
+    b->pins[16].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 1, 0 };
+    b->pins[16].aio.pinmap = 0;
+
+    strncpy(b->pins[17].name, "A1", 8);
+    b->pins[17].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 1, 0 };
+    b->pins[17].aio.pinmap = 1;
+
+    strncpy(b->pins[18].name, "A2", 8);
+    b->pins[18].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 1, 0 };
+    b->pins[18].aio.pinmap = 2;
 
     // BUS DEFINITIONS
     b->i2c_bus_count = 9;
@@ -2109,5 +2141,58 @@ mraa_nbext_misc_spi()
     mraa_intel_edison_pinmode_change(109, 1);
 
     return MRAA_SUCCESS;
+}
+
+mraa_result_t
+mraa_nbext_aio_get_fp(mraa_aio_context dev)
+{
+	return MRAA_SUCCESS;
+}
+mraa_result_t
+mraa_nbext_aio_init_pre(unsigned int aio)
+{
+	//printf("[%s,%d]aio=%d\n",__FILE__,__LINE__,aio);
+	return MRAA_SUCCESS;
+
+}
+mraa_result_t
+mraa_nbext_aio_init_post(mraa_aio_context dev)
+{
+	//int p = dev->channel;
+	//printf("[%s,%d]aio=%d\n",__FILE__,__LINE__,p);
+	return MRAA_SUCCESS;
+
+}
+mraa_result_t
+mraa_nbext_aio_read(mraa_aio_context dev,unsigned long *pval)
+{
+	int p = dev->channel;
+	int16_t val = 0;
+	if(pval==0){
+		return MRAA_ERROR_INVALID_PARAMETER;
+	}
+	int ret= mraa_nbext_adc_read(p,&val);
+	if(ret){
+		return MRAA_ERROR_INVALID_PARAMETER;
+	}
+	*pval = val;
+	return MRAA_SUCCESS;
+}
+
+mraa_result_t
+mraa_nbext_aio_read_float(mraa_aio_context dev,float *pval)
+{
+	int p = dev->channel;
+	float val = 0;
+	if(pval==0){
+		return MRAA_ERROR_INVALID_PARAMETER;
+	}
+	int ret= mraa_nbext_adc_read_float(p,&val);
+	if(ret){
+		return MRAA_ERROR_INVALID_PARAMETER;
+	}
+	*pval = val;
+	return MRAA_SUCCESS;
+
 }
 

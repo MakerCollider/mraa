@@ -74,7 +74,9 @@ typedef struct {
 
     mraa_result_t (*aio_get_valid_fp) (mraa_aio_context dev);
     mraa_result_t (*aio_init_pre) (unsigned int aio);
-    mraa_result_t (*aio_init_post) (mraa_aio_context dev);
+    mraa_result_t (*aio_init_post) (mraa_aio_context dev);	
+    mraa_result_t (*aio_read) (mraa_aio_context dev,unsigned long *pval);
+    mraa_result_t (*aio_read_float) (mraa_aio_context dev,float *pval);
 
     mraa_pwm_context (*pwm_init_replace) (int pin);
     mraa_result_t (*pwm_init_pre) (int pin);
