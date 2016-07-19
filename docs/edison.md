@@ -17,6 +17,8 @@ Intel Arduino board
 The Edison used with the Arduino board has the following limitations
 in libmraa:
 
+- Do not use the 'reset' button on the arduino shields, there is a hardware
+  bug and the platform will likely not come back up correctly
 - I2C is exposed on i2c-6, therefore you must use bus 6 and not bus 0
 - PWM available on default swizzler positions. (3,5,6,9)
 - SPI exposed is also used for the ADC. Try not to use your own CS.
@@ -35,6 +37,10 @@ in libmraa:
   of the Arduino breakout board, this is not supported officially so asking for
   mraa_i2c_init(1) will result in getting i2c bus 6 (the default one). However
   using raw mode (mraa_i2c_init_raw(1)) this bus is fully usable
+- If you want to use /dev/ttyMFD2 you have to use the raw uart mode passing a
+  std::string or char* argument of "/dev/ttyMFD2" to mraa:Uart() or
+  mraa_uart_init_raw. By default there is a getty running on that interface so
+  you will need to disable that first
 
 Because of the way IO is setup with the tristate on the Arduino breakout board
 IO will be flipped as it is setup. It's recommended to setup IO pins &

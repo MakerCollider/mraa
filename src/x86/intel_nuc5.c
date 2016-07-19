@@ -51,7 +51,7 @@ mraa_intel_nuc5()
         goto error;
     }
 
-    b->pins = (mraa_pininfo_t*) malloc(sizeof(mraa_pininfo_t) * MRAA_INTEL_NUC5_PINCOUNT);
+    b->pins = (mraa_pininfo_t*) calloc(MRAA_INTEL_NUC5_PINCOUNT,sizeof(mraa_pininfo_t));
     if (b->pins == NULL) {
         free(b->adv_func);
         goto error;
@@ -126,8 +126,8 @@ mraa_intel_nuc5()
         }
         b->i2c_bus_count++;
         b->i2c_bus[i].bus_id = i2c_num;
-        b->i2c_bus[i].sda = 12 + i;
-        b->i2c_bus[i].scl = 13 + i;
+        b->i2c_bus[i].sda = 12 + (i*2);
+        b->i2c_bus[i].scl = 13 + (i*2);
     }
 
     if (b->i2c_bus_count > 0) {

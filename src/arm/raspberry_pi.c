@@ -208,14 +208,14 @@ mraa_raspberry_pi_mmap_setup(mraa_gpio_context dev, mraa_boolean_t en)
 mraa_board_t*
 mraa_raspberry_pi()
 {
-    mraa_board_t* b = (mraa_board_t*) malloc(sizeof(mraa_board_t));
+    mraa_board_t* b = (mraa_board_t*) calloc(1, sizeof(mraa_board_t));
     if (b == NULL) {
         return NULL;
     }
     b->phy_pin_count = 0;
 
     size_t len = 100;
-    char* line = malloc(len);
+    char* line = calloc(len, sizeof(char));
 
     FILE* fh = fopen("/proc/cpuinfo", "r");
     if (fh != NULL) {
@@ -246,7 +246,7 @@ mraa_raspberry_pi()
                     b->platform_name = PLATFORM_NAME_RASPBERRY_PI_A_PLUS_REV_1;
                     platform_detected = PLATFORM_RASPBERRY_PI_A_PLUS_REV_1;
                     b->phy_pin_count = MRAA_RASPBERRY_PI_AB_PLUS_PINCOUNT;
-                } else if (strstr(line, "a01041") || strstr(line, "a21041")) {
+                } else if (strstr(line, "a01041") || strstr(line, "a21041") || strstr(line, "a02082")) {
                     b->platform_name = PLATFORM_NAME_RASPBERRY_PI2_B_REV_1;
                     platform_detected = PLATFORM_RASPBERRY_PI2_B_REV_1;
                     b->phy_pin_count = MRAA_RASPBERRY_PI2_B_REV_1_PINCOUNT;
@@ -280,7 +280,7 @@ mraa_raspberry_pi()
         return NULL;
     }
 
-    b->pins = (mraa_pininfo_t*) malloc(sizeof(mraa_pininfo_t) * b->phy_pin_count);
+    b->pins = (mraa_pininfo_t*) calloc(b->phy_pin_count, sizeof(mraa_pininfo_t));
     if (b->pins == NULL) {
         free(b->adv_func);
         free(b);

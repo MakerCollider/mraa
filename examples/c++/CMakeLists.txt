@@ -1,3 +1,5 @@
+enable_language(CXX)
+
 add_executable (AioA0 AioA0.cpp)
 add_executable (blink-io-cpp Blink-IO.cpp)
 add_executable (Pwm3-cycle Pwm3-cycle.cpp)
@@ -17,3 +19,8 @@ target_link_libraries (Spi-pot mraa stdc++)
 target_link_libraries (Uart mraa stdc++)
 target_link_libraries (Isr-pin6 mraa stdc++)
 target_link_libraries (Iio-dummy mraa stdc++)
+
+if (ONEWIRE)
+  add_executable (UartOW UartOW.cpp)
+  target_link_libraries (UartOW mraa stdc++)
+endif ()

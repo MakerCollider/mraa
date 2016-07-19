@@ -48,10 +48,17 @@ typedef enum {
     MRAA_INTEL_NUC5 = 8,            /**< The Intel 5th generations Broadwell NUCs */
     MRAA_96BOARDS = 9,            /**< Linaro 96boards */
     MRAA_INTEL_SOFIA_3GR = 10,      /**< The Intel SoFIA 3GR */
+    MRAA_INTEL_CHERRYHILLS = 11,     /**< The Intel Braswell Cherryhills */
+    MRAA_UP = 12,                    /**< The UP Board */
+    MRAA_INTEL_GT_TUCHUCK = 13,      /**< The Intel GT Tuchuck Board */
 
     // USB platform extenders start at 256
     MRAA_FTDI_FT4222 = 256,         /**< FTDI FT4222 USB to i2c bridge */
 
+    // contains bit 9 so is subplatform
+    MRAA_GENERIC_FIRMATA = 1280,    /**< Firmata uart platform/bridge */
+
+    MRAA_MOCK_PLATFORM = 96,        /**< Mock platform, which requires no real hardware */
     MRAA_NULL_PLATFORM = 98,        /**< Platform with no capabilities that hosts a sub platform  */
     MRAA_UNKNOWN_PLATFORM =
     99 /**< An unknown platform type, typically will load INTEL_GALILEO_GEN1 */
@@ -201,7 +208,9 @@ typedef enum {
     MRAA_ERROR_NO_DATA_AVAILABLE = 9,             /**< No data available */
     MRAA_ERROR_INVALID_PLATFORM = 10,             /**< Platform not recognised */
     MRAA_ERROR_PLATFORM_NOT_INITIALISED = 11,     /**< Board information not initialised */
-    MRAA_ERROR_PLATFORM_ALREADY_INITIALISED = 12, /**< Board is already initialised */
+    MRAA_ERROR_UART_OW_SHORTED = 12,              /**< UART OW Short Circuit Detected*/
+    MRAA_ERROR_UART_OW_NO_DEVICES = 13,           /**< UART OW No devices detected */
+    MRAA_ERROR_UART_OW_DATA_ERROR = 14,           /**< UART OW Data/Bus error detected */
 
     MRAA_ERROR_UNSPECIFIED = 99 /**< Unknown Error */
 } mraa_result_t;
@@ -236,8 +245,6 @@ typedef enum {
 	MRAA_UART_PARITY_MARK = 3,
 	MRAA_UART_PARITY_SPACE = 4
 } mraa_uart_parity_t;
-
-
 
 #ifdef __cplusplus
 }

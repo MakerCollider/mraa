@@ -70,6 +70,29 @@ class Spi
         }
     }
 
+    Spi(int bus, int cs)
+    {
+        m_spi = mraa_spi_init_raw(bus, cs);
+
+        if (m_spi == NULL) {
+            throw std::invalid_argument("Error initialising SPI bus");
+        }
+    }
+
+    /**
+     * Spi Constructor, takes a pointer to a SPI context and initialises
+     * the SPI class
+     *
+     * @param void * to SPI context
+     */
+    Spi(void* spi_context)
+    {
+        m_spi = (mraa_spi_context) spi_context;
+        if (m_spi == NULL) {
+            throw std::invalid_argument("Invalid SPI context");
+        }
+    }
+
     /**
      * Closes spi bus
      */
@@ -118,10 +141,10 @@ class Spi
      * Write single byte to the SPI device
      *
      * @param data the byte to send
-     * @return data received on the miso line
+     * @return data received on the miso line or -1 in case of error
      */
-    uint16_t
-    write_word(uint16_t data)
+    int
+    writeWord(uint16_t data)
     {
         return mraa_spi_write_word(m_spi, (uint16_t) data);
     }
@@ -152,7 +175,7 @@ class Spi
      * @return uint8_t* data received on the miso line. Same length as passed in
      */
     uint16_t*
-    write_word(uint16_t* txBuf, int length)
+    writeWord(uint16_t* txBuf, int length)
     {
         return mraa_spi_write_buf_word(m_spi, txBuf, length);
     }

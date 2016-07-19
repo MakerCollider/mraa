@@ -1,10 +1,10 @@
 Building libmraa                         {#building}
 ===============
-
 libmraa uses cmake in order to make compilation relatively painless. CMake runs
 build out of tree so the recommended way is to clone from git and make a `build/`
 directory inside the clone directory.
 
+For building imraa check [building imraa](./imraa.md)
 ## Build dependencies
 Not all these are required but if you're unsure of what you're doing this is
 what you'll need:
@@ -12,7 +12,7 @@ what you'll need:
 * [git](http://git-scm.com)
 * [python](http://python.org) 2.7 or 3.4+ (you'll need not just the interpreter but python-dev)
 * [node.js](http://nodejs.org) 0.10.x or 0.12.x (you'll need not just the interpreter but nodejs-dev)
-* [CMake](http://cmake.org) 2.8.8+
+* [CMake](http://cmake.org) 2.8.8+ (3.1+ is recommended for node.js version 2+)
 
 For Debian-like distros the below command installs the basic set:
 
@@ -92,10 +92,6 @@ Building doc, this will require [SPHINX](http://sphinx-doc.org) &
 [Doxygen](http://doxygen.org):
  `-DBUILDDOC=ON`
 
-Building with Python 3 (careful you need to clear CMake cache between Python
-version switches!)
- `-DBUILDPYTHON3=ON`
-
 Override build architecture (this is useful because on x86 ARM code is not
 compiled so use this flag to force the target arch)
  `-DBUILDARCH=arm`
@@ -164,13 +160,15 @@ To run, make sure `libmraajava.so` is in `LD_LIBRARY_PATH`
 jave -cp $DIR_WHERE_YOU_INSTALLED_MRAA/mraa.jar:. Example
 ~~~~~~~~~~~~~
 
+If you want to add or improve Java bindings for mraa, please follow the [Creating Java Bindings Guide](https://github.com/intel-iot-devkit/upm/blob/master/docs/creating_java_bindings.md).
+
 ## Building an IPK/RPM package using `cpack`
 
 You can get `cpack` to generate an IPK or RPM package fairly easily if you have
 the correct packaging tools
 
 ~~~~~~~~~~~~~{.sh}
-cmake -DIPK=ON -DCMAKE_INSTAL_PREFIX=/usr ..
+cmake -DIPK=ON -DCMAKE_INSTALL_PREFIX=/usr ..
 make package
 ~~~~~~~~~~~~~
 
@@ -178,5 +176,5 @@ To use RPM simply enable the RPM option. You'll need `rpmbuild` installed on you
 build machine.
 
 ~~~~~~~~~~~~~{.sh}
-cmake -DRPM=ON -DCMAKE_INSTAL_PREFIX=/usr ..
+cmake -DRPM=ON -DCMAKE_INSTALL_PREFIX=/usr ..
 ~~~~~~~~~~~~~

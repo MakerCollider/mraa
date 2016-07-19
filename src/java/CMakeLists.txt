@@ -1,5 +1,4 @@
 FIND_PACKAGE (JNI REQUIRED)
-
 include_directories (
   ${JAVA_INCLUDE_PATH}
   ${JAVA_INCLUDE_PATH2}
@@ -10,9 +9,13 @@ include_directories (
 set_source_files_properties (mraajava.i PROPERTIES SWIG_FLAGS ";-package;mraa;-I${CMAKE_BINARY_DIR}/src")
 set_source_files_properties (mraajava.i PROPERTIES CPLUSPLUS ON)
 
-set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
+set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive -DJAVACALLBACK")
+set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DJAVACALLBACK")
 
-if (NOT DEFINED $ENV{JAVA_HOME_NATIVE})
+if (NOT DEFINED ENV{JAVA_HOME_NATIVE})
+  if (NOT DEFINED ENV{JAVA_HOME})
+    message (FATAL_ERROR "Neither JAVA_HOME nor JAVA_HOME_NATIVE are set")
+  endif()
   set (JAVA_HOME_NATIVE $ENV{JAVA_HOME})
   set (JAVAC $ENV{JAVA_HOME}/bin/javac)
   set (JAR $ENV{JAVA_HOME}/bin/jar)
@@ -21,8 +24,8 @@ else ()
   set (JAR $ENV{JAVA_HOME_NATIVE}/bin/jar)
 endif ()
 
-swig_add_module (mraajava java mraajava.i ${mraa_LIB_SRCS})
-swig_link_libraries (mraajava ${JAVA_LIBRARIES} ${mraa_LIBS})
+swig_add_module (mraajava java mraajava.i mraajni.c)
+swig_link_libraries (mraajava ${JAVA_LIBRARIES} mraa)
 
 add_custom_command (TARGET mraajava
   POST_BUILD
@@ -30,7 +33,7 @@ add_custom_command (TARGET mraajava
   COMMAND cmake -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/mraa
   COMMAND ${JAVAC} *.java -d ${CMAKE_CURRENT_BINARY_DIR}
   COMMAND cmake -E echo "Creating jar"
-  COMMAND ${JAR} cvf mraa.jar mraa
+  COMMAND ${JAR} cvmf manifest.txt mraa.jar mraa
 )
 
 if (DOXYGEN_FOUND)
@@ -39,9 +42,7 @@ if (DOXYGEN_FOUND)
   endforeach ()
 endif ()
 
-install (FILES ${CMAKE_CURRENT_BINARY_DIR}/libmraajava.so
-		DESTINATION lib/java
-)
-install (FILES ${CMAKE_CURRENT_BINARY_DIR}/mraa.jar
-		DESTINATION lib/java
-)
+mraa_create_install_pkgconfig (mraajava.pc ${LIB_INSTALL_DIR}/pkgconfig)
+
+install (TARGETS mraajava LIBRARY DESTINATION ${LIB_INSTALL_DIR})
+install (FILES ${CMAKE_CURRENT_BINARY_DIR}/mraa.jar DESTINATION ${LIB_INSTALL_DIR}/../lib/java)

@@ -1,6 +1,7 @@
 /*
  * Author: Thomas Ingleby <thomas.c.ingleby@intel.com>
- * Copyright (c) 2014 Intel Corporation.
+ *         Brendan Le Foll <brendan.le.foll@intel.com>
+ * Copyright (c) 2014-2016 Intel Corporation.
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -28,6 +29,7 @@
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <linux/spi/spidev.h>
+#include <errno.h>
 
 #include "common.h"
 #include "x86/intel_edison_fab_c.h"
@@ -48,14 +50,14 @@
 typedef struct {
     int sysfs;
     int mode;
-} mraa_intel_edision_pindef_t;
+} mraa_intel_edison_pindef_t;
 
 typedef struct {
-    mraa_intel_edision_pindef_t gpio;
-    mraa_intel_edision_pindef_t pwm;
-    mraa_intel_edision_pindef_t i2c;
-    mraa_intel_edision_pindef_t spi;
-    mraa_intel_edision_pindef_t uart;
+    mraa_intel_edison_pindef_t gpio;
+    mraa_intel_edison_pindef_t pwm;
+    mraa_intel_edison_pindef_t i2c;
+    mraa_intel_edison_pindef_t spi;
+    mraa_intel_edison_pindef_t uart;
 } mraa_intel_edison_pinmodes_t;
 
 static mraa_gpio_context tristate;
@@ -74,6 +76,9 @@ static uint8_t* mmap_reg = NULL;
 static int mmap_fd = 0;
 static int mmap_size;
 static unsigned int mmap_count = 0;
+
+// PWM 0% duty workaround state array
+static int pwm_disabled[4] = { 0 };
 
 /************************************
 ************* B E G I N *************
@@ -432,6 +437,30 @@ mraa_intel_edison_aio_init_post(mraa_aio_context dev)
 }
 
 mraa_result_t
+mraa_intel_edison_pwm_enable_pre(mraa_pwm_context dev, int enable) {
+    // PWM 0% duty workaround: update state array
+    // if someone first ran write(0) and then enable(1).
+    if ((pwm_disabled[dev->pin] == 1) && (enable == 1)) { pwm_disabled[dev->pin] = 0; }
+    return MRAA_SUCCESS;
+}
+
+mraa_result_t
+mraa_intel_edison_pwm_write_pre(mraa_pwm_context dev, float percentage) {
+    // PWM 0% duty workaround: set the state array and enable/disable pin accordingly
+    if (percentage == 0.0f) {
+        syslog(LOG_INFO, "edison_pwm_write_pre (pwm%i): requested zero duty cycle, disabling PWM on the pin", dev->pin);
+        pwm_disabled[dev->pin] = 1;
+        return mraa_pwm_enable(dev, 0);
+    } else if (pwm_disabled[dev->pin] == 1) {
+        syslog(LOG_INFO, "edison_pwm_write_pre (pwm%i): Re-enabling the pin after setting non-zero duty", dev->pin);
+        pwm_disabled[dev->pin] = 0;
+        return mraa_pwm_enable(dev, 1);
+    }
+
+    return MRAA_SUCCESS;
+}
+
+mraa_result_t
 mraa_intel_edison_pwm_init_pre(int pin)
 {
     if (miniboard == 1) {
@@ -478,6 +507,7 @@ mraa_intel_edison_pwm_init_pre(int pin)
 mraa_result_t
 mraa_intel_edison_pwm_init_post(mraa_pwm_context pwm)
 {
+    pwm_disabled[pwm->pin] = 0;
     return mraa_gpio_write(tristate, 1);
 }
 
@@ -490,6 +520,7 @@ mraa_intel_edison_spi_init_pre(int bus)
         mraa_intel_edison_pinmode_change(109, 1);
         return MRAA_SUCCESS;
     }
+
     mraa_gpio_write(tristate, 0);
 
     mraa_gpio_context io10_out = mraa_gpio_init_raw(258);
@@ -567,7 +598,6 @@ mraa_intel_edison_gpio_mode_replace(mraa_gpio_context dev, mraa_gpio_mode_t mode
             value = 0;
             break;
         case MRAA_GPIO_HIZ:
-            return MRAA_SUCCESS;
             break;
         default:
             return MRAA_ERROR_FEATURE_NOT_IMPLEMENTED;
@@ -589,7 +619,7 @@ mraa_intel_edison_gpio_mode_replace(mraa_gpio_context dev, mraa_gpio_mode_t mode
 }
 
 mraa_result_t
-mraa_intel_edsion_mb_gpio_mode(mraa_gpio_context dev, mraa_gpio_mode_t mode)
+mraa_intel_edison_mb_gpio_mode(mraa_gpio_context dev, mraa_gpio_mode_t mode)
 {
     if (dev->value_fp != -1) {
         if (close(dev->value_fp) != 0) {
@@ -695,7 +725,7 @@ mraa_intel_edison_uart_init_post(mraa_uart_context uart)
 }
 
 static mraa_result_t
-mraa_intel_edsion_mmap_unsetup()
+mraa_intel_edison_mmap_unsetup()
 {
     if (mmap_reg == NULL) {
         syslog(LOG_ERR, "edison mmap: null register cant unsetup");
@@ -756,7 +786,7 @@ mraa_intel_edison_mmap_setup(mraa_gpio_context dev, mraa_boolean_t en)
         dev->mmap_read = NULL;
         mmap_count--;
         if (mmap_count == 0) {
-            return mraa_intel_edsion_mmap_unsetup();
+            return mraa_intel_edison_mmap_unsetup();
         }
         return MRAA_SUCCESS;
     }
@@ -854,7 +884,7 @@ mraa_intel_edison_miniboard(mraa_board_t* b)
     b->pwm_max_period = 218453;
     b->pwm_min_period = 1;
 
-    b->pins = (mraa_pininfo_t*) malloc(sizeof(mraa_pininfo_t) * 56);
+    b->pins = (mraa_pininfo_t*) calloc(b->phy_pin_count, sizeof(mraa_pininfo_t));
     if (b->pins == NULL) {
         return MRAA_ERROR_UNSPECIFIED;
     }
@@ -866,16 +896,18 @@ mraa_intel_edison_miniboard(mraa_board_t* b)
     }
     b->adv_func->gpio_init_post = &mraa_intel_edison_gpio_init_post;
     b->adv_func->pwm_init_pre = &mraa_intel_edison_pwm_init_pre;
+    b->adv_func->pwm_enable_pre = &mraa_intel_edison_pwm_enable_pre;
+    b->adv_func->pwm_write_pre = &mraa_intel_edison_pwm_write_pre;
     b->adv_func->i2c_init_pre = &mraa_intel_edison_i2c_init_pre;
     b->adv_func->i2c_set_frequency_replace = &mraa_intel_edison_i2c_freq;
     b->adv_func->spi_init_pre = &mraa_intel_edison_spi_init_pre;
-    b->adv_func->gpio_mode_replace = &mraa_intel_edsion_mb_gpio_mode;
+    b->adv_func->gpio_mode_replace = &mraa_intel_edison_mb_gpio_mode;
     b->adv_func->uart_init_pre = &mraa_intel_edison_uart_init_pre;
     b->adv_func->gpio_mmap_setup = &mraa_intel_edison_mmap_setup;
 
     int pos = 0;
     strncpy(b->pins[pos].name, "J17-1", 8);
-    b->pins[pos].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0 };
+    b->pins[pos].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0, 0 };
     b->pins[pos].gpio.pinmap = 182;
     b->pins[pos].gpio.mux_total = 0;
     b->pins[pos].pwm.pinmap = 2;
@@ -962,7 +994,7 @@ mraa_intel_edison_miniboard(mraa_board_t* b)
     pos++;
 
     strncpy(b->pins[pos].name, "J18-1", 8);
-    b->pins[pos].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0 };
+    b->pins[pos].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0 , 0};
     b->pins[pos].gpio.pinmap = 13;
     b->pins[pos].gpio.mux_total = 0;
     b->pins[pos].pwm.pinmap = 1;
@@ -971,7 +1003,7 @@ mraa_intel_edison_miniboard(mraa_board_t* b)
     pos++;
 
     strncpy(b->pins[pos].name, "J18-2", 8);
-    b->pins[pos].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0 };
+    b->pins[pos].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 0 };
     b->pins[pos].gpio.pinmap = 165;
     b->pins[pos].gpio.mux_total = 0;
     pos++;
@@ -994,7 +1026,7 @@ mraa_intel_edison_miniboard(mraa_board_t* b)
     pos++;
 
     strncpy(b->pins[pos].name, "J18-7", 8);
-    b->pins[pos].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0 };
+    b->pins[pos].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0, 0 };
     b->pins[pos].gpio.pinmap = 12;
     b->pins[pos].gpio.mux_total = 0;
     b->pins[pos].pwm.pinmap = 0;
@@ -1003,7 +1035,7 @@ mraa_intel_edison_miniboard(mraa_board_t* b)
     pos++;
 
     strncpy(b->pins[pos].name, "J18-8", 8);
-    b->pins[pos].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0 };
+    b->pins[pos].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0, 0 };
     b->pins[pos].gpio.pinmap = 183;
     b->pins[pos].gpio.mux_total = 0;
     b->pins[pos].pwm.pinmap = 3;
@@ -1185,7 +1217,7 @@ mraa_intel_edison_miniboard(mraa_board_t* b)
 
     // BUS DEFINITIONS
     b->i2c_bus_count = 9;
-    b->def_i2c_bus = 6;
+    b->def_i2c_bus = 1;
     int ici;
     for (ici = 0; ici < 9; ici++) {
         b->i2c_bus[ici].bus_id = -1;
@@ -1216,9 +1248,77 @@ mraa_intel_edison_miniboard(mraa_board_t* b)
     return MRAA_SUCCESS;
 }
 
+mraa_boolean_t
+is_arduino_board()
+{
+    // We check for two things to determine if that's an Arduino expansion board
+    // 1) is tristate GPIO available, by trying to initialize it
+    // 2) are there four specific GPIO expanders, by reading device labels
+    //        /sys/class/gpio/gpiochip{200,216,232,248}/label == "pcal9555a"
+    char gpiochip_path[MAX_SIZE];
+    char gpiochip_label[MAX_SIZE];
+    const char gpiochip_label_arduino[] = "pcal9555a";
+    const int gpiochip_idx[4] = { 200, 216, 232, 248 };
+
+    // prepare format string for fscanf, based on MAX_SIZE
+    char format_str[MAX_SIZE];
+    snprintf(format_str, MAX_SIZE, "%%%ds", MAX_SIZE - 1);
+    int i, ret, errno_saved;
+
+    // check tristate first
+    tristate = mraa_gpio_init_raw(214);
+    if (tristate == NULL) {
+        syslog(LOG_INFO, "edison: tristate not detected");
+        return 0;
+    }
+
+    // GPIO expanders second
+    for (i=0; i<(sizeof(gpiochip_idx)/sizeof(gpiochip_idx[0])); i++) {
+        memset(gpiochip_path, 0, MAX_SIZE);
+        snprintf(gpiochip_path,
+                 MAX_SIZE,
+                 SYSFS_CLASS_GPIO "/gpiochip%d/label",
+                 gpiochip_idx[i]);
+        FILE *fp;
+        fp = fopen(gpiochip_path, "r");
+        if (fp == NULL) {
+            syslog(LOG_INFO,
+                   "edison: could not open '%s', errno %d",
+                   gpiochip_path,
+                   errno);
+            return 0;
+        }
+
+        memset(gpiochip_label, 0, MAX_SIZE);
+        ret = fscanf(fp, format_str, &gpiochip_label);
+        errno_saved = errno;
+        fclose(fp);
+        if (ret != 1) {
+            syslog(LOG_INFO,
+                   "edison: could not read from '%s', errno %d",
+                   gpiochip_path,
+                   errno_saved);
+            return 0;
+        }
+
+        // we want to check for exact match
+        if (strncmp(gpiochip_label, gpiochip_label_arduino, strlen(gpiochip_label) + 1) != 0) {
+            syslog(LOG_INFO,
+                   "edison: gpiochip label (%s) is not what we expect (%s)\n",
+                   gpiochip_label,
+                   gpiochip_label_arduino);
+            return 0;
+        }
+    }
+
+    syslog(LOG_NOTICE, "edison: Arduino board detected");
+    return 1;
+}
+
 mraa_board_t*
 mraa_intel_edison_fab_c()
 {
+    mraa_gpio_dir_t tristate_dir;
     mraa_board_t* b = (mraa_board_t*) calloc(1, sizeof(mraa_board_t));
     if (b == NULL) {
         return NULL;
@@ -1237,12 +1337,10 @@ mraa_intel_edison_fab_c()
 		//if not, go on.
 	}
 	/*mc code end*/
-	
-    // This seciton will also check if the arduino board is there
-    tristate = mraa_gpio_init_raw(214);
-    if (tristate == NULL) {
-        syslog(LOG_INFO, "edison: Failed to initialise Arduino board TriState,\
-                assuming Intel Edison Miniboard\n");
+
+    if (is_arduino_board() == 0) {
+        syslog(LOG_NOTICE,
+               "edison: Arduino board not detected, assuming Intel Edison Miniboard");
         if (mraa_intel_edison_miniboard(b) != MRAA_SUCCESS) {
             goto error;
         }
@@ -1252,6 +1350,7 @@ mraa_intel_edison_fab_c()
     b->phy_pin_count = 20;
     b->gpio_count = 14;
     b->aio_count = 6;
+    b->platform_version = "arduino";
 
     b->adv_func = (mraa_adv_func_t*) calloc(1, sizeof(mraa_adv_func_t));
     if (b->adv_func == NULL) {
@@ -1268,6 +1367,8 @@ mraa_intel_edison_fab_c()
     b->adv_func->aio_init_post = &mraa_intel_edison_aio_init_post;
     b->adv_func->pwm_init_pre = &mraa_intel_edison_pwm_init_pre;
     b->adv_func->pwm_init_post = &mraa_intel_edison_pwm_init_post;
+    b->adv_func->pwm_enable_pre = &mraa_intel_edison_pwm_enable_pre;
+    b->adv_func->pwm_write_pre = &mraa_intel_edison_pwm_write_pre;
     b->adv_func->spi_init_pre = &mraa_intel_edison_spi_init_pre;
     b->adv_func->spi_init_post = &mraa_intel_edison_spi_init_post;
     b->adv_func->gpio_mode_replace = &mraa_intel_edison_gpio_mode_replace;
@@ -1276,13 +1377,23 @@ mraa_intel_edison_fab_c()
     b->adv_func->gpio_mmap_setup = &mraa_intel_edison_mmap_setup;
     b->adv_func->spi_lsbmode_replace = &mraa_intel_edison_spi_lsbmode_replace;
 
-    b->pins = (mraa_pininfo_t*) malloc(sizeof(mraa_pininfo_t) * MRAA_INTEL_EDISON_PINCOUNT);
+    b->pins = (mraa_pininfo_t*) calloc(MRAA_INTEL_EDISON_PINCOUNT, sizeof(mraa_pininfo_t));
     if (b->pins == NULL) {
         free(b->adv_func);
         goto error;
     }
 
-    mraa_gpio_dir(tristate, MRAA_GPIO_OUT);
+    if (mraa_gpio_read_dir(tristate, &tristate_dir) != MRAA_SUCCESS) {
+        free(b->pins);
+        free(b->adv_func);
+        goto error;
+    }
+
+    if (tristate_dir != MRAA_GPIO_OUT) {
+        mraa_gpio_dir(tristate, MRAA_GPIO_OUT);
+    }
+
+    // this is required to initialise not just SPI but also the ADC channels
     mraa_intel_edison_misc_spi();
 
     b->adc_raw = 12;
@@ -1295,7 +1406,10 @@ mraa_intel_edison_fab_c()
     b->pins[0].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 1 };
     b->pins[0].gpio.pinmap = 130;
     b->pins[0].gpio.parent_id = 0;
-    b->pins[0].gpio.mux_total = 0;
+    b->pins[0].gpio.mux_total = 1;
+    b->pins[0].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[0].gpio.mux[0].pin = 216;
+    b->pins[0].gpio.mux[0].value = MRAA_GPIO_IN;
     b->pins[0].uart.pinmap = 0;
     b->pins[0].uart.parent_id = 0;
     b->pins[0].uart.mux_total = 0;
@@ -1304,37 +1418,52 @@ mraa_intel_edison_fab_c()
     b->pins[1].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 1 };
     b->pins[1].gpio.pinmap = 131;
     b->pins[1].gpio.parent_id = 0;
-    b->pins[1].gpio.mux_total = 0;
+    b->pins[1].gpio.mux_total = 1;
+    b->pins[1].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[1].gpio.mux[0].pin = 217;
+    b->pins[1].gpio.mux[0].value = MRAA_GPIO_IN;
     b->pins[1].uart.pinmap = 0;
     b->pins[1].uart.parent_id = 0;
     b->pins[1].uart.mux_total = 0;
 
     strncpy(b->pins[2].name, "IO2", 8);
-    b->pins[2].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0 };
+    b->pins[2].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 0 };
     b->pins[2].gpio.pinmap = 128;
     b->pins[2].gpio.parent_id = 0;
-    b->pins[2].gpio.mux_total = 0;
+    b->pins[2].gpio.mux_total = 1;
+    b->pins[2].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[2].gpio.mux[0].pin = 218;
+    b->pins[2].gpio.mux[0].value = MRAA_GPIO_IN;
 
     strncpy(b->pins[3].name, "IO3", 8);
-    b->pins[3].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0 };
+    b->pins[3].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0, 0 };
     b->pins[3].gpio.pinmap = 12;
     b->pins[3].gpio.parent_id = 0;
-    b->pins[3].gpio.mux_total = 0;
+    b->pins[3].gpio.mux_total = 1;
+    b->pins[3].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[3].gpio.mux[0].pin = 219;
+    b->pins[3].gpio.mux[0].value = MRAA_GPIO_IN;
     b->pins[3].pwm.pinmap = 0;
     b->pins[3].pwm.parent_id = 0;
     b->pins[3].pwm.mux_total = 0;
 
     strncpy(b->pins[4].name, "IO4", 8);
-    b->pins[4].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0 };
+    b->pins[4].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 0 };
     b->pins[4].gpio.pinmap = 129;
     b->pins[4].gpio.parent_id = 0;
-    b->pins[4].gpio.mux_total = 0;
+    b->pins[4].gpio.mux_total = 1;
+    b->pins[4].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[4].gpio.mux[0].pin = 220;
+    b->pins[4].gpio.mux[0].value = MRAA_GPIO_IN;
 
     strncpy(b->pins[5].name, "IO5", 8);
     b->pins[5].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0, 0 };
     b->pins[5].gpio.pinmap = 13;
     b->pins[5].gpio.parent_id = 0;
-    b->pins[5].gpio.mux_total = 0;
+    b->pins[5].gpio.mux_total = 1;
+    b->pins[5].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[5].gpio.mux[0].pin = 221;
+    b->pins[5].gpio.mux[0].value = MRAA_GPIO_IN;
     b->pins[5].pwm.pinmap = 1;
     b->pins[5].pwm.parent_id = 0;
     b->pins[5].pwm.mux_total = 0;
@@ -1343,28 +1472,40 @@ mraa_intel_edison_fab_c()
     b->pins[6].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0, 0 };
     b->pins[6].gpio.pinmap = 182;
     b->pins[6].gpio.parent_id = 0;
-    b->pins[6].gpio.mux_total = 0;
+    b->pins[6].gpio.mux_total = 1;
+    b->pins[6].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[6].gpio.mux[0].pin = 222;
+    b->pins[6].gpio.mux[0].value = MRAA_GPIO_IN;
     b->pins[6].pwm.pinmap = 2;
     b->pins[6].pwm.parent_id = 0;
     b->pins[6].pwm.mux_total = 0;
 
     strncpy(b->pins[7].name, "IO7", 8);
-    b->pins[7].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0 };
+    b->pins[7].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 0 };
     b->pins[7].gpio.pinmap = 48;
     b->pins[7].gpio.parent_id = 0;
-    b->pins[7].gpio.mux_total = 0;
+    b->pins[7].gpio.mux_total = 1;
+    b->pins[7].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[7].gpio.mux[0].pin = 223;
+    b->pins[7].gpio.mux[0].value = MRAA_GPIO_IN;
 
     strncpy(b->pins[8].name, "IO8", 8);
-    b->pins[8].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0 };
+    b->pins[8].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 0, 0 };
     b->pins[8].gpio.pinmap = 49;
     b->pins[8].gpio.parent_id = 0;
-    b->pins[8].gpio.mux_total = 0;
+    b->pins[8].gpio.mux_total = 1;
+    b->pins[8].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[8].gpio.mux[0].pin = 224;
+    b->pins[8].gpio.mux[0].value = MRAA_GPIO_IN;
 
     strncpy(b->pins[9].name, "IO9", 8);
     b->pins[9].capabilites = (mraa_pincapabilities_t){ 1, 1, 1, 0, 0, 0, 0, 0 };
     b->pins[9].gpio.pinmap = 183;
     b->pins[9].gpio.parent_id = 0;
-    b->pins[9].gpio.mux_total = 0;
+    b->pins[9].gpio.mux_total = 1;
+    b->pins[9].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[9].gpio.mux[0].pin = 225;
+    b->pins[9].gpio.mux[0].value = MRAA_GPIO_IN;
     b->pins[9].pwm.pinmap = 3;
     b->pins[9].pwm.parent_id = 0;
     b->pins[9].pwm.mux_total = 0;
@@ -1373,131 +1514,223 @@ mraa_intel_edison_fab_c()
     b->pins[10].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 1, 0, 0, 0 };
     b->pins[10].gpio.pinmap = 41;
     b->pins[10].gpio.parent_id = 0;
-    b->pins[10].gpio.mux_total = 2;
-    b->pins[10].gpio.mux[0].pin = 263;
-    b->pins[10].gpio.mux[0].value = 1;
-    b->pins[10].gpio.mux[1].pin = 240;
-    b->pins[10].gpio.mux[1].value = 0;
+    b->pins[10].gpio.mux_total = 3;
+    b->pins[10].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[10].gpio.mux[0].pin = 226;
+    b->pins[10].gpio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[10].gpio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[10].gpio.mux[1].pin = 263;
+    b->pins[10].gpio.mux[1].value = 1;
+    b->pins[10].gpio.mux[2].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[10].gpio.mux[2].pin = 240;
+    b->pins[10].gpio.mux[2].value = 0;
     b->pins[10].spi.pinmap = 5;
-    b->pins[10].spi.mux_total = 2;
-    b->pins[10].spi.mux[0].pin = 263;
-    b->pins[10].spi.mux[0].value = 1;
-    b->pins[10].spi.mux[1].pin = 240;
+    b->pins[10].spi.mux_total = 3;
+    b->pins[10].spi.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[10].spi.mux[0].pin = 226;
+    b->pins[10].spi.mux[0].value = MRAA_GPIO_IN;
+    b->pins[10].spi.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[10].spi.mux[1].pin = 263;
     b->pins[10].spi.mux[1].value = 1;
+    b->pins[10].spi.mux[2].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[10].spi.mux[2].pin = 240;
+    b->pins[10].spi.mux[2].value = 1;
 
     strncpy(b->pins[11].name, "IO11", 8);
     b->pins[11].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 1, 0, 0, 0 };
     b->pins[11].gpio.pinmap = 43;
     b->pins[11].gpio.parent_id = 0;
-    b->pins[11].gpio.mux_total = 2;
-    b->pins[11].gpio.mux[0].pin = 262;
-    b->pins[11].gpio.mux[0].value = 1;
-    b->pins[11].gpio.mux[1].pin = 241;
-    b->pins[11].gpio.mux[1].value = 0;
+    b->pins[11].gpio.mux_total = 3;
+    b->pins[11].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[11].gpio.mux[0].pin = 227;
+    b->pins[11].gpio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[11].gpio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[11].gpio.mux[1].pin = 262;
+    b->pins[11].gpio.mux[1].value = 1;
+    b->pins[11].gpio.mux[2].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[11].gpio.mux[2].pin = 241;
+    b->pins[11].gpio.mux[2].value = 0;
     b->pins[11].spi.pinmap = 5;
-    b->pins[11].spi.mux_total = 2;
-    b->pins[11].spi.mux[0].pin = 262;
-    b->pins[11].spi.mux[0].value = 1;
-    b->pins[11].spi.mux[1].pin = 241;
+    b->pins[11].spi.mux_total = 3;
+    b->pins[11].spi.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[11].spi.mux[0].pin = 227;
+    b->pins[11].spi.mux[0].value = MRAA_GPIO_IN;
+    b->pins[10].spi.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[11].spi.mux[1].pin = 262;
     b->pins[11].spi.mux[1].value = 1;
+    b->pins[10].spi.mux[2].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[11].spi.mux[2].pin = 241;
+    b->pins[11].spi.mux[2].value = 1;
 
     strncpy(b->pins[12].name, "IO12", 8);
     b->pins[12].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 1, 0, 0, 0 };
     b->pins[12].gpio.pinmap = 42;
     b->pins[12].gpio.parent_id = 0;
-    b->pins[12].gpio.mux_total = 1;
-    b->pins[12].gpio.mux[0].pin = 242;
-    b->pins[12].gpio.mux[0].value = 0;
+    b->pins[12].gpio.mux_total = 2;
+    b->pins[12].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[12].gpio.mux[0].pin = 228;
+    b->pins[12].gpio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[12].gpio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[12].gpio.mux[1].pin = 242;
+    b->pins[12].gpio.mux[1].value = 0;
     b->pins[12].spi.pinmap = 5;
-    b->pins[12].spi.mux_total = 1;
-    b->pins[12].spi.mux[0].pin = 242;
-    b->pins[12].spi.mux[0].value = 1;
+    b->pins[12].spi.mux_total = 2;
+    b->pins[12].spi.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[12].spi.mux[0].pin = 228;
+    b->pins[12].spi.mux[0].value = MRAA_GPIO_IN;
+    b->pins[12].spi.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[12].spi.mux[1].pin = 242;
+    b->pins[12].spi.mux[1].value = 1;
 
     strncpy(b->pins[13].name, "IO13", 8);
     b->pins[13].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 1, 0, 0, 0 };
     b->pins[13].gpio.pinmap = 40;
     b->pins[13].gpio.parent_id = 0;
-    b->pins[13].gpio.mux_total = 1;
-    b->pins[13].gpio.mux[0].pin = 243;
-    b->pins[13].gpio.mux[0].value = 0;
+    b->pins[13].gpio.mux_total = 2;
+    b->pins[13].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[13].gpio.mux[0].pin = 229;
+    b->pins[13].gpio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[13].gpio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[13].gpio.mux[1].pin = 243;
+    b->pins[13].gpio.mux[1].value = 0;
     b->pins[13].spi.pinmap = 5;
-    b->pins[13].spi.mux_total = 1;
-    b->pins[13].spi.mux[0].pin = 243;
-    b->pins[13].spi.mux[0].value = 1;
+    b->pins[13].spi.mux_total = 2;
+    b->pins[13].spi.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[13].spi.mux[0].pin = 229;
+    b->pins[13].spi.mux[0].value = MRAA_GPIO_IN;
+    b->pins[13].spi.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[13].spi.mux[1].pin = 243;
+    b->pins[13].spi.mux[1].value = 1;
 
     strncpy(b->pins[14].name, "A0", 8);
     b->pins[14].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 1, 0 };
     b->pins[14].aio.pinmap = 0;
-    b->pins[14].aio.mux_total = 1;
-    b->pins[14].aio.mux[0].pin = 200;
-    b->pins[14].aio.mux[0].value = 1;
+    b->pins[14].aio.mux_total = 2;
+    b->pins[14].aio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[14].aio.mux[0].pin = 208;
+    b->pins[14].aio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[14].aio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[14].aio.mux[1].pin = 200;
+    b->pins[14].aio.mux[1].value = 1;
     b->pins[14].gpio.pinmap = 44;
-    b->pins[14].gpio.mux_total = 1;
-    b->pins[14].gpio.mux[0].pin = 200;
-    b->pins[14].gpio.mux[0].value = 0;
+    b->pins[14].gpio.mux_total = 2;
+    b->pins[14].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[14].gpio.mux[0].pin = 208;
+    b->pins[14].gpio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[14].gpio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[14].gpio.mux[1].pin = 200;
+    b->pins[14].gpio.mux[1].value = 0;
 
     strncpy(b->pins[15].name, "A1", 8);
     b->pins[15].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 1, 0 };
     b->pins[15].aio.pinmap = 1;
-    b->pins[15].aio.mux_total = 1;
-    b->pins[15].aio.mux[0].pin = 201;
-    b->pins[15].aio.mux[0].value = 1;
+    b->pins[15].aio.mux_total = 2;
+    b->pins[15].aio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[15].aio.mux[0].pin = 209;
+    b->pins[15].aio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[15].aio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[15].aio.mux[1].pin = 201;
+    b->pins[15].aio.mux[1].value = 1;
     b->pins[15].gpio.pinmap = 45;
-    b->pins[15].gpio.mux_total = 1;
-    b->pins[15].gpio.mux[0].pin = 201;
-    b->pins[15].gpio.mux[0].value = 0;
+    b->pins[15].gpio.mux_total = 2;
+    b->pins[15].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[15].gpio.mux[0].pin = 209;
+    b->pins[15].gpio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[15].gpio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[15].gpio.mux[1].pin = 201;
+    b->pins[15].gpio.mux[1].value = 0;
 
     strncpy(b->pins[16].name, "A2", 8);
     b->pins[16].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 1, 0 };
     b->pins[16].aio.pinmap = 2;
-    b->pins[16].aio.mux_total = 1;
-    b->pins[16].aio.mux[0].pin = 202;
-    b->pins[16].aio.mux[0].value = 1;
+    b->pins[16].aio.mux_total = 2;
+    b->pins[16].aio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[16].aio.mux[0].pin = 210;
+    b->pins[16].aio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[16].aio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[16].aio.mux[1].pin = 202;
+    b->pins[16].aio.mux[1].value = 1;
     b->pins[16].gpio.pinmap = 46;
-    b->pins[16].gpio.mux_total = 1;
-    b->pins[16].gpio.mux[0].pin = 202;
-    b->pins[16].gpio.mux[0].value = 0;
+    b->pins[16].gpio.mux_total = 2;
+    b->pins[16].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[16].gpio.mux[0].pin = 210;
+    b->pins[16].gpio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[16].gpio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[16].gpio.mux[1].pin = 202;
+    b->pins[16].gpio.mux[1].value = 0;
 
     strncpy(b->pins[17].name, "A3", 8);
     b->pins[17].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 0, 1, 0 };
     b->pins[17].aio.pinmap = 3;
-    b->pins[17].aio.mux_total = 1;
-    b->pins[17].aio.mux[0].pin = 203;
-    b->pins[17].aio.mux[0].value = 1;
+    b->pins[17].aio.mux_total = 2;
+    b->pins[17].aio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[17].aio.mux[0].pin = 211;
+    b->pins[17].aio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[17].aio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[17].aio.mux[1].pin = 203;
+    b->pins[17].aio.mux[1].value = 1;
     b->pins[17].gpio.pinmap = 47;
-    b->pins[17].gpio.mux_total = 1;
-    b->pins[17].gpio.mux[0].pin = 203;
-    b->pins[17].gpio.mux[0].value = 0;
+    b->pins[17].gpio.mux_total = 2;
+    b->pins[17].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[17].gpio.mux[0].pin = 211;
+    b->pins[17].gpio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[17].gpio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[17].gpio.mux[1].pin = 203;
+    b->pins[17].gpio.mux[1].value = 0;
 
     strncpy(b->pins[18].name, "A4", 8);
     b->pins[18].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 1, 1, 0 };
     b->pins[18].i2c.pinmap = 1;
-    b->pins[18].i2c.mux_total = 1;
-    b->pins[18].i2c.mux[0].pin = 204;
-    b->pins[18].i2c.mux[0].value = 0;
+    b->pins[18].i2c.mux_total = 2;
+    b->pins[18].i2c.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[18].i2c.mux[0].pin = 212;
+    b->pins[18].i2c.mux[0].value = MRAA_GPIO_IN;
+    b->pins[18].i2c.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[18].i2c.mux[1].pin = 204;
+    b->pins[18].i2c.mux[1].value = 0;
     b->pins[18].aio.pinmap = 4;
-    b->pins[18].aio.mux_total = 1;
-    b->pins[18].aio.mux[0].pin = 204;
-    b->pins[18].aio.mux[0].value = 1;
+    b->pins[18].aio.mux_total = 2;
+    b->pins[18].aio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[18].aio.mux[0].pin = 212;
+    b->pins[18].aio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[18].aio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[18].aio.mux[1].pin = 204;
+    b->pins[18].aio.mux[1].value = 1;
     b->pins[18].gpio.pinmap = 14;
-    b->pins[18].gpio.mux_total = 1;
-    b->pins[18].gpio.mux[0].pin = 204;
-    b->pins[18].gpio.mux[0].value = 0;
+    b->pins[18].gpio.mux_total = 2;
+    b->pins[18].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[18].gpio.mux[0].pin = 212;
+    b->pins[18].gpio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[18].gpio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[18].gpio.mux[1].pin = 204;
+    b->pins[18].gpio.mux[1].value = 0;
 
     strncpy(b->pins[19].name, "A5", 8);
     b->pins[19].capabilites = (mraa_pincapabilities_t){ 1, 1, 0, 0, 0, 1, 1, 0 };
     b->pins[19].i2c.pinmap = 1;
-    b->pins[19].i2c.mux_total = 1;
-    b->pins[19].i2c.mux[0].pin = 205;
-    b->pins[19].i2c.mux[0].value = 0;
+    b->pins[19].i2c.mux_total = 2;
+    b->pins[19].i2c.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[19].i2c.mux[0].pin = 213;
+    b->pins[19].i2c.mux[0].value = MRAA_GPIO_IN;
+    b->pins[19].i2c.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[19].i2c.mux[1].pin = 205;
+    b->pins[19].i2c.mux[1].value = 0;
     b->pins[19].aio.pinmap = 5;
-    b->pins[19].aio.mux_total = 1;
-    b->pins[19].aio.mux[0].pin = 205;
-    b->pins[19].aio.mux[0].value = 1;
+    b->pins[19].aio.mux_total = 2;
+    b->pins[18].aio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[18].aio.mux[0].pin = 213;
+    b->pins[18].aio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[18].aio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[19].aio.mux[1].pin = 205;
+    b->pins[19].aio.mux[1].value = 1;
     b->pins[19].gpio.pinmap = 165;
-    b->pins[19].gpio.mux_total = 1;
-    b->pins[19].gpio.mux[0].pin = 205;
-    b->pins[19].gpio.mux[0].value = 0;
+    b->pins[19].gpio.mux_total = 2;
+    b->pins[19].gpio.mux[0].pincmd = PINCMD_SET_DIRECTION;
+    b->pins[19].gpio.mux[0].pin = 213;
+    b->pins[19].gpio.mux[0].value = MRAA_GPIO_IN;
+    b->pins[19].gpio.mux[1].pincmd = PINCMD_SET_OUT_VALUE;
+    b->pins[19].gpio.mux[1].pin = 205;
+    b->pins[19].gpio.mux[1].value = 0;
 
     // BUS DEFINITIONS
     b->i2c_bus_count = 9;
@@ -1568,7 +1801,8 @@ mraa_intel_edison_fab_c()
     pinmodes[6].pwm.sysfs = 182;
     pinmodes[6].pwm.mode = 1;
 
-    // 7 and 8 are provided by something on i2c, very simplepinmodes[3].gpio.sysfs = 12;
+    // 7 and 8 are provided by something on i2c, very simple
+
     pinmodes[9].gpio.sysfs = 183;
     pinmodes[9].gpio.mode = 0;
     pinmodes[9].pwm.sysfs = 183;
@@ -1593,7 +1827,9 @@ mraa_intel_edison_fab_c()
     pinmodes[13].gpio.mode = 0;
     pinmodes[13].spi.sysfs = 109; // Different pin provides, switched at mux level.
     pinmodes[13].spi.mode = 1;
+
     // Everything else but A4 A5 LEAVE
+
     pinmodes[18].gpio.sysfs = 14;
     pinmodes[18].gpio.mode = 0;
     pinmodes[18].i2c.sysfs = 28;
